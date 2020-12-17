@@ -5,8 +5,6 @@ module Main (
 
 import Prelude hiding (Left, Right)
 import Prelude (getLine)
-import System.Directory (createDirectoryIfMissing)
-import System.FilePath.Posix (takeDirectory)
 
 -- instructions that can be read from 
 data Instr =  Forward Float
@@ -17,6 +15,7 @@ data Instr =  Forward Float
               | Rect Float Float
               | CRect Float Float
               | Repeat Int [Instr]
+              | To Float Float
               | Color String
                 deriving (Show, Read)
 
@@ -34,16 +33,17 @@ data Cursor = Cursor {x::Float, y::Float, ang::Float, color::String} deriving (S
 
 
 -- executes the following instruction in the instruction list
-step :: Int -> [Instr] -> Cursor -> [Shape] -> (Cursor, [Shape], Int)
-step index [] currentCursor shapes = (currentCursor, shapes, index) -- out of instructions
-step index (instr:sequel) currentCursor@(Cursor x y ang _) shapes = case instr of -- x is instruction
+step :: [Instr] -> Cursor -> [Shape] -> (Cursor, [Shape])
+step [] currentCursor shapes = (currentCursor, shapes) -- out of instructions
+step (instr:sequel) currentCursor@(Cursor x y ang color) shapes = case instr of -- x is instruction
 
   -- if is a control instruction (only repeat here)
-  Repeat count repeatInstruction -> step index ((multLst count repeatInstruction) ++ sequel) currentCursor shapes
-  Color color                    -> step (index+1) sequel (Cursor x y ang color) shapes
+  Repeat count repeatInstruction  -> step ((multLst count repeatInstruction) ++ sequel) currentCursor shapes
+  Color newColor                  -> step sequel (Cursor x y ang newColor) shapes
+  To tx ty                        -> step sequel (Cursor tx ty ang color) shapes
 
   _ -> -- if is an action instruction, execute it
-    step (index+1) sequel newCursor newShapes
+    step sequel newCursor newShapes
     where (newCursor, newShapes) = execInstr currentCursor instr shapes
 
 -- Movement function selector
@@ -70,11 +70,11 @@ logoToSkell :: Logo -> Skell
 logoToSkell (Logo str) = 
   Skell $ (read str :: [Instr])
 
--- applies segToString to each Seg of Seg list/array
+-- applies segToString to each Seg of a Seg list/array
 shapeArrayToSvgLines :: [Shape] -> [String]
 shapeArrayToSvgLines = map shapeToString
 
--- convert Seg to an xml line using its cursors
+-- convert Seg to an svg xml line using its cursors
 shapeToString :: Shape -> String
 shapeToString shape =
   case shape of
@@ -83,20 +83,15 @@ shapeToString shape =
     RectangleShape (Cursor x y ang _) w h color       -> "\n<rect y=\"0\" y=\"0\" width=\"" ++ show w ++ "\" height=\"" ++ show h ++ "\" style=\"fill:" ++ color ++ "\" transform=\"translate(" ++ show x ++ "," ++ show y ++ ") rotate(" ++ show ang ++ " " ++ show (w/2) ++ " " ++ show (h/2) ++ ")\" />"
 
 -- replicate each element of a list : 5 * [0, 1] -> [0, 1, 0, 1, 0, 1, 0, 1, 0, 1]
+-- applies concatMap to [arr] with partially evaluated function: replicate n    [[x,y,z]] => [[x,y,z],[x,y,z], ...(n times)]
+-- then concats the result : [[x,y,z],[x,y,z], ...(n times)]
 multLst :: Int -> [a] -> [a]
 multLst n arr = concat $ (concatMap . replicate) n [arr]
-
--- writes string to path (unused)
-createAndWriteFile :: FilePath -> String -> IO ()
-createAndWriteFile path content = do
-  createDirectoryIfMissing True $ takeDirectory path
-
-  writeFile path content
 
 run :: Skell -> (Float, Float) -> (Float, Float, Float, String) -> String
 run (Skell instrLst) (width, height) (startX, startY, startAng, color) = do
 
-  let (_, shapes, _) = step 0 instrLst (Cursor startX startY startAng color) []
+  let (_, shapes) = step instrLst (Cursor startX startY startAng color) []
 
   "<?xml version=\"1.0\" encoding=\"utf-8\"?><svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" width=\"" ++ show width ++ "\" height=\"" ++ show height ++ "\">" ++ concat (shapeArrayToSvgLines shapes) ++ "</svg>"
 
